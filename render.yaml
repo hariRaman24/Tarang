@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: tarang-marine-intelligence
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/status
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: GEMINI_MODEL
+        value: gemini-3.6-flash
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: TARANG_RATE_LIMIT
+        value: "30"
+      - key: TARANG_RATE_WINDOW_SECONDS
+        value: "60"
+      - key: TARANG_MAX_BODY_BYTES
+        value: "65536"

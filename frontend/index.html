@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TARANG — Agentic Marine Intelligence Platform</title>
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    crossorigin=""
+  />
+
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="brand">~ TARANG</div>
+      <div class="subtitle" id="subtitle">Agentic Marine Intelligence Platform</div>
+    </div>
+
+    <div class="top-actions">
+      <div class="lang-switch">
+        <button class="lang-btn active" data-lang="en">EN</button>
+        <button class="lang-btn" data-lang="ta">TA</button>
+        <button class="lang-btn" data-lang="hi">HI</button>
+      </div>
+      <div id="backendStatus" class="status status-warn">Backend: checking…</div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="panel controls">
+      <div class="section-title" id="locationTitle">LOCATION</div>
+
+      <div class="row">
+        <select id="locationSelect">
+          <option value="13.05,80.28">Chennai</option>
+          <option value="11.75,79.77">Cuddalore</option>
+          <option value="10.76,79.84">Nagapattinam</option>
+          <option value="9.29,79.31">Rameswaram</option>
+          <option value="8.76,78.13">Tuticorin</option>
+          <option value="8.08,77.55">Kanyakumari</option>
+          <option value="9.93,76.26">Kochi</option>
+          <option value="12.87,74.84">Mangalore</option>
+          <option value="15.40,73.80">Goa</option>
+          <option value="18.95,72.83">Mumbai</option>
+          <option value="20.90,70.37">Veraval</option>
+          <option value="17.69,83.22">Visakhapatnam</option>
+          <option value="20.32,86.61">Paradip</option>
+          <option value="21.65,88.05">Kolkata (Sagar)</option>
+          <option value="11.62,92.72">Port Blair</option>
+        </select>
+        <button id="gpsBtn" class="secondary">📍 GPS</button>
+      </div>
+
+      <div id="locationText" class="muted small">Focused on Chennai (13.05, 80.28)</div>
+
+      <div class="divider"></div>
+
+      <div class="section-title" id="vesselTitle">VESSEL PROFILE</div>
+
+      <div class="row">
+        <select id="vesselType">
+          <option value="motorized">Motorized boat</option>
+          <option value="traditional">Traditional boat</option>
+          <option value="mechanized">Mechanized boat</option>
+        </select>
+        <input id="rangeKm" type="number" min="1" max="1000" value="25" />
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="section-title" id="askTitle">ASK TARANG</div>
+
+      <div class="voice-row">
+        <div class="muted small" id="voiceLabel">Voice language:</div>
+        <div class="lang-switch compact">
+          <button class="voice-lang active" data-voice-lang="en-IN">EN</button>
+          <button class="voice-lang" data-voice-lang="ta-IN">TA</button>
+          <button class="voice-lang" data-voice-lang="hi-IN">HI</button>
+        </div>
+      </div>
+
+      <div id="queryChips" class="chips"></div>
+
+      <div class="query-row">
+        <textarea id="queryInput" rows="3" placeholder="Ask a marine question…">Where is the nearest Potential Fishing Zone today?</textarea>
+        <button id="micBtn" class="mic-btn" title="Voice input">🎙</button>
+        <button id="askBtn" class="primary">Ask</button>
+      </div>
+
+      <div class="demo-box">
+        <div class="demo-head">
+          <div class="section-title" id="demoTitle">HACKATHON DEMO MODE</div>
+          <button id="resetDemo" class="tiny-btn">Reset</button>
+        </div>
+
+        <div id="demoSteps" class="muted small">
+          Choose a scenario to guide the live demonstration.
+        </div>
+
+        <div id="demoScenarios" class="chips demo-chips"></div>
+      </div>
+
+      <div id="requestState" class="muted small request-state"></div>
+
+      <div id="agentTraceWrap" class="trace-wrap hidden">
+        <div class="section-title">AGENT TRACE</div>
+        <div id="agentTrace" class="trace"></div>
+      </div>
+
+      <div id="answerCard" class="answer-card hidden">
+        <div class="answer-head">
+          <span class="badge good">LIVE RESULT</span>
+          <span id="answerLangBadge" class="badge ghost">LANG: EN</span>
+        </div>
+
+        <div id="answerText" class="answer"></div>
+
+        <div id="recommendationRow" class="detail-row hidden">
+          <span class="label">Recommendation:</span>
+          <span id="recommendationValue"></span>
+        </div>
+
+        <div id="reasonWrap" class="hidden">
+          <div class="subheading">Reasons</div>
+          <div id="reasons" class="mini-list"></div>
+        </div>
+
+        <div id="geoWrap" class="hidden">
+          <div class="subheading">Geospatial</div>
+          <div id="geoSummary" class="mini-list"></div>
+        </div>
+
+        <div id="telemetryWrap" class="hidden">
+          <div class="subheading">Agent execution telemetry</div>
+          <div id="telemetry" class="telemetry"></div>
+        </div>
+
+        <div id="provenanceWrap" class="hidden">
+          <div class="subheading">Evidence and provenance</div>
+          <div id="provenance" class="mini-list"></div>
+        </div>
+
+        <div id="marineAnalyticsWrap" class="hidden">
+          <div class="subheading">Marine analytics</div>
+          <div id="marineAnalytics" class="mini-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel map-panel">
+      <div class="section-title">GEOSPATIAL VIEW</div>
+
+      <div id="alertsArea"></div>
+
+      <div class="map-shell">
+        <div id="map"></div>
+
+        <div id="forecastCard" class="forecast-card hidden">
+          <div class="forecast-card-head">
+            <span id="forecastCardTitle">FORECAST +0h</span>
+            <button id="forecastCardToggle" class="tiny-btn">−</button>
+          </div>
+          <div id="forecastCardBody"></div>
+        </div>
+      </div>
+
+      <div class="forecast-section">
+        <div class="section-title">TEMPORAL FORECAST</div>
+
+        <input id="forecastSlider" type="range" min="0" max="0" value="0" />
+        <div id="forecastReadout" class="forecast-readout muted">
+          Run a query first — the slider scrubs the location's hourly forecast.
+        </div>
+      </div>
+
+      <div class="trend-section">
+        <div class="trend-head">
+          <div class="section-title">HOURLY MARINE TREND</div>
+          <div class="legend">
+            <span>● wave</span>
+            <span>● wind</span>
+            <span>● SST</span>
+          </div>
+        </div>
+        <canvas id="trendCanvas" width="900" height="250"></canvas>
+        <div class="muted tiny">
+          Each line is normalized independently to show trend direction; exact values are shown in the forecast readout.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    TARANG backend: FastAPI + real agents · frontend calls /api/query
+  </footer>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    crossorigin=""
+  ></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

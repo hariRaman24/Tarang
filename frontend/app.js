@@ -725,60 +725,45 @@ function initEarthMapUI() {
   const shell = document.querySelector(".map-shell");
   if (!shell || document.getElementById("earthMapLeftPanel")) return;
 
-  shell.classList.add("earth-map-shell");
+  shell.classList.add("earth-map-shell", "earth-compact-mode");
 
   const left = document.createElement("div");
   left.id = "earthMapLeftPanel";
-  left.className = "earth-panel earth-panel-left";
+  left.className = "earth-panel earth-panel-left earth-drawer earth-drawer-hidden";
   left.innerHTML = `
-    <div class="earth-panel-title">LIVE MAPS</div>
+    <div class="earth-drawer-head">
+      <div class="earth-panel-title">MAP & WEATHER</div>
+      <button class="earth-drawer-close" data-close-drawer="left">×</button>
+    </div>
 
-    <button class="earth-map-btn active" data-base="satellite">
-      <span>◉</span><b>Satellite</b>
-    </button>
-    <button class="earth-map-btn" data-base="ocean">
-      <span>≈</span><b>Ocean</b>
-    </button>
-    <button class="earth-map-btn" data-base="street">
-      <span>▦</span><b>Street</b>
-    </button>
+    <div class="earth-group-label">BASE MAP</div>
+    <button class="earth-map-btn active" data-base="satellite"><span>◉</span><b>Satellite</b></button>
+    <button class="earth-map-btn" data-base="ocean"><span>≈</span><b>Ocean</b></button>
+    <button class="earth-map-btn" data-base="street"><span>▦</span><b>Street</b></button>
 
     <div class="earth-panel-separator"></div>
-    <div class="earth-panel-title">WEATHER</div>
-
-    <button class="earth-weather-btn active" data-mode="radar">
-      <span>◔</span><b>Radar</b>
-    </button>
-    <button class="earth-weather-btn" data-mode="precipitation">
-      <span>☂</span><b>Precipitation</b>
-    </button>
-    <button class="earth-weather-btn" data-mode="wind">
-      <span>≋</span><b>Wind</b>
-    </button>
-    <button class="earth-weather-btn" data-mode="temperature">
-      <span>♨</span><b>Temperature</b>
-    </button>
-    <button class="earth-weather-btn" data-mode="humidity">
-      <span>◌</span><b>Humidity</b>
-    </button>
-    <button class="earth-weather-btn" data-mode="pressure">
-      <span>◎</span><b>Pressure</b>
-    </button>
-
-    <div class="earth-point-note">Forecast weather layers are point-based at the selected location; radar is a real map overlay.</div>
+    <div class="earth-group-label">WEATHER</div>
+    <button class="earth-weather-btn active" data-mode="radar"><span>◔</span><b>Radar</b></button>
+    <button class="earth-weather-btn" data-mode="precipitation"><span>☂</span><b>Rain</b></button>
+    <button class="earth-weather-btn" data-mode="wind"><span>≋</span><b>Wind</b></button>
+    <button class="earth-weather-btn" data-mode="temperature"><span>♨</span><b>Temperature</b></button>
   `;
 
   const right = document.createElement("div");
   right.id = "earthMapRightPanel";
-  right.className = "earth-panel earth-panel-right";
+  right.className = "earth-panel earth-panel-right earth-drawer earth-drawer-hidden";
   right.innerHTML = `
-    <div class="earth-panel-title">MARINE OVERLAYS</div>
+    <div class="earth-drawer-head">
+      <div class="earth-panel-title">MARINE LAYERS</div>
+      <button class="earth-drawer-close" data-close-drawer="right">×</button>
+    </div>
+
     ${earthToggleHtml("radar", "◔", "Radar", true)}
     ${earthToggleHtml("pfz", "●", "PFZ", true)}
     ${earthToggleHtml("landing", "⚓", "Landing Centres", false)}
     ${earthToggleHtml("vesselRange", "◎", "Vessel Range", true)}
     ${earthToggleHtml("route", "↗", "Route", true)}
-    ${earthToggleHtml("oceanEvidence", "≈", "SST / CHL Evidence", false)}
+    ${earthToggleHtml("oceanEvidence", "≈", "SST / CHL", false)}
     ${earthToggleHtml("warnings", "⚠", "Warnings", true)}
   `;
 
@@ -800,11 +785,12 @@ function initEarthMapUI() {
   compass.innerHTML = `<b>~ TARANG</b><span>Marine Earth View</span>`;
 
   const tools = document.createElement("div");
-  tools.className = "earth-quick-tools";
+  tools.className = "earth-quick-tools earth-compact-toolbar";
   tools.innerHTML = `
-    <button id="earthIndiaViewBtn" title="India overview">INDIA</button>
-    <button id="earthFocusViewBtn" title="Focus selected location">FOCUS</button>
-    <button id="earthPanelsBtn" title="Show/hide map panels">☰</button>
+    <button id="earthLayersBtn" title="Map & weather layers">☰ Layers</button>
+    <button id="earthMarineBtn" title="Marine overlays">≋ Marine</button>
+    <button id="earthFocusViewBtn" title="Focus selected location">⌖</button>
+    <button id="earthIndiaViewBtn" title="India overview">◎</button>
   `;
 
   shell.appendChild(left);
@@ -845,8 +831,28 @@ function initEarthMapUI() {
     map.setView([selectedLat, selectedLon], 8);
   });
 
-  document.getElementById("earthPanelsBtn").addEventListener("click", () => {
-    shell.classList.toggle("earth-panels-hidden");
+  const leftDrawer = document.getElementById("earthMapLeftPanel");
+  const rightDrawer = document.getElementById("earthMapRightPanel");
+
+  const closeDrawers = () => {
+    leftDrawer.classList.add("earth-drawer-hidden");
+    rightDrawer.classList.add("earth-drawer-hidden");
+  };
+
+  document.getElementById("earthLayersBtn").addEventListener("click", () => {
+    const willOpen = leftDrawer.classList.contains("earth-drawer-hidden");
+    closeDrawers();
+    if (willOpen) leftDrawer.classList.remove("earth-drawer-hidden");
+  });
+
+  document.getElementById("earthMarineBtn").addEventListener("click", () => {
+    const willOpen = rightDrawer.classList.contains("earth-drawer-hidden");
+    closeDrawers();
+    if (willOpen) rightDrawer.classList.remove("earth-drawer-hidden");
+  });
+
+  document.querySelectorAll("[data-close-drawer]").forEach(btn => {
+    btn.addEventListener("click", closeDrawers);
   });
 
   applyEarthOverlayVisibility();

@@ -170,48 +170,239 @@ def _deterministic_plan(query: str) -> dict:
     }
 
 
+def _history_for_prompt(history: list[dict]) -> str:
+    """
+    Keep only the small amount of conversational context the planner needs.
+    This supports follow-ups such as:
+      - "what about tomorrow?"
+      - "show the second one"
+      - "is that safe for my boat?"
+    without sending large telemetry/evidence payloads to Gemini.
+    """
+    compact: list[dict] = []
+
+    for message in (history or [])[-8:]:
+        item = {
+            "role": message.get("role"),
+            "content": message.get("content"),
+        }
+
+        payload = message.get("payload") or {}
+        if payload:
+            context: dict = {}
+
+            if payload.get("location"):
+                context["location"] = payload.get("location")
+
+            if payload.get("vessel"):
+                context["vessel"] = payload.get("vessel")
+
+            old_plan = payload.get("plan") or {}
+            if old_plan:
+                context["previous_intent"] = old_plan.get("intent")
+                context["previous_time_window"] = old_plan.get("time_window")
+                context["previous_query_focus"] = old_plan.get("query_focus")
+
+            if context:
+                item["context"] = context
+
+        compact.append(item)
+
+    return json.dumps(
+        compact,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+PLANNER_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "intent": {
+            "type": "string",
+            "enum": list(INTENT_AGENTS.keys()),
+        },
+        "language": {
+            "type": "string",
+            "enum": ["en", "ta", "hi"],
+        },
+        "time_window": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "enum": [
+                        "today",
+                        "tomorrow",
+                        "tomorrow_morning",
+                        "tonight",
+                    ],
+                },
+                {"type": "null"},
+            ],
+        },
+        "location_name": {
+            "anyOf": [
+                {"type": "string"},
+                {"type": "null"},
+            ],
+        },
+        "vessel_type": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "enum": [
+                        "traditional",
+                        "motorized",
+                        "mechanized",
+                    ],
+                },
+                {"type": "null"},
+            ],
+        },
+        "query_focus": {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "enum": [
+                        "hazard_avoidance",
+                        "specific_hazard_status",
+                    ],
+                },
+                {"type": "null"},
+            ],
+        },
+        "requested_hazards": {
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": [
+                    "cyclone",
+                    "lightning",
+                    "high_wave",
+                    "strong_wind",
+                    "marine_warning",
+                ],
+            },
+        },
+        "requires_clarification": {
+            "type": "boolean",
+        },
+        "clarification": {
+            "anyOf": [
+                {"type": "string"},
+                {"type": "null"},
+            ],
+        },
+        "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+        },
+        "planning_summary": {
+            "type": "string",
+            "description": (
+                "One short sentence describing the resolved intent/context. "
+                "Do not reveal hidden chain-of-thought."
+            ),
+        },
+    },
+    "required": [
+        "intent",
+        "language",
+        "time_window",
+        "location_name",
+        "vessel_type",
+        "query_focus",
+        "requested_hazards",
+        "requires_clarification",
+        "clarification",
+        "confidence",
+        "planning_summary",
+    ],
+}
+
+
 def _llm_prompt(query: str, history: list[dict]) -> str:
     return f"""
-You are TARANG, a marine intelligence query planner. Return JSON only.
-Never give safety advice and never invent marine data. Extract user intent
-and entities so deterministic backend agents can calculate the answer.
+You are the Planner Agent for TARANG, an agentic marine-intelligence
+decision-support platform for fishermen.
 
-Planning rules:
-- "Which fishing zones should be avoided due to hazardous conditions?" is PFZ
-  analysis with query_focus="hazard_avoidance", not a geofence-only query.
-- "Which fishing zones should be avoided due to restrictions?" is a geofence /
-  restriction query because the user is asking about regulatory/boundary limits.
-- Preserve specifically requested hazard classes such as cyclone or lightning
-  in requested_hazards.
-- Use geofence only for actual protected/restricted/boundary-zone questions.
+Your job is PLANNING ONLY:
+- understand the current user's intent,
+- use recent conversation context when the query is a follow-up,
+- detect English, Tamil, or Hindi,
+- resolve the requested time window,
+- identify specifically requested hazard classes,
+- identify a location or vessel type only when the user actually states it,
+- select exactly one intent from the allowed list.
 
-Allowed intents: {", ".join(INTENT_AGENTS)}.
-Allowed languages: en, ta, hi.
-JSON shape:
-{{
-  "intent": "one allowed intent",
-  "language": "en",
-  "time_window": "today|tomorrow|tomorrow_morning|tonight|null",
-  "location_name": "string|null",
-  "vessel_type": "traditional|motorized|mechanized|null",
-  "query_focus": "hazard_avoidance|specific_hazard_status|null",
-  "requested_hazards": ["cyclone|lightning|high_wave|strong_wind|marine_warning"],
-  "requires_clarification": true,
-  "clarification": "short question or null",
-  "confidence": 0.0
-}}
+Never invent weather, waves, PFZs, cyclone status, lightning status,
+chlorophyll, SST, boundaries, routes, or safety conclusions.
+Those facts must come from TARANG's deterministic tools and official/live
+data connectors.
 
-Previous conversation:
-{history[-8:]}
+IMPORTANT SEMANTIC RULES:
+1. "Which fishing zones should be avoided due to hazardous conditions?"
+   => intent="pfz", query_focus="hazard_avoidance".
+2. "Which fishing zones should be avoided due to restrictions/boundaries?"
+   => intent="geofence".
+3. A question specifically asking about cyclone/lightning/warnings
+   => intent="alerts", query_focus="specific_hazard_status", and preserve
+      each requested class in requested_hazards.
+4. A safest-route/navigation/corridor question => intent="route".
+5. "Why has fish productivity declined..." => intent="decline".
+6. A follow-up such as "what about tomorrow?" should inherit the relevant
+   previous intent/location/vessel context when it is unambiguous.
+7. The current explicit user message always overrides older context.
+8. If the request is genuinely ambiguous, set requires_clarification=true.
 
-Current query:
+Allowed intents:
+{", ".join(INTENT_AGENTS.keys())}
+
+Recent conversation context:
+{_history_for_prompt(history)}
+
+Current user query:
 {query}
+
+Return only the structured response required by the JSON schema.
 """.strip()
+
+
+def _extract_interaction_text(body: dict) -> str:
+    """
+    Extract final text from the REST Interactions API response.
+
+    The REST response contains steps. We accept the final model_output text
+    and also tolerate a top-level output_text field if Google adds/provides it.
+    """
+    top_level = body.get("output_text")
+    if isinstance(top_level, str) and top_level.strip():
+        return top_level.strip()
+
+    steps = body.get("steps") or []
+
+    for step in reversed(steps):
+        if step.get("type") != "model_output":
+            continue
+
+        content = step.get("content") or []
+        for part in reversed(content):
+            if (
+                isinstance(part, dict)
+                and part.get("type") == "text"
+                and isinstance(part.get("text"), str)
+                and part["text"].strip()
+            ):
+                return part["text"].strip()
+
+    raise KeyError("No model_output text found in Gemini interaction response")
 
 
 def _validate_llm_plan(candidate: object, fallback: dict) -> dict | None:
     if not isinstance(candidate, dict):
         return None
+
     intent = candidate.get("intent")
     if intent not in INTENT_AGENTS:
         return None
@@ -222,9 +413,12 @@ def _validate_llm_plan(candidate: object, fallback: dict) -> dict | None:
 
     result = {
         "intent": intent,
+        # Required agents are assigned by TARANG, never trusted from the LLM.
         "required_agents": INTENT_AGENTS[intent],
         "confidence": max(0.0, min(float(confidence), 1.0)),
-        "needs_clarification": bool(candidate.get("requires_clarification")),
+        "needs_clarification": bool(
+            candidate.get("requires_clarification")
+        ),
         "clarification": candidate.get("clarification"),
         "time_window": candidate.get("time_window"),
         "query_focus": candidate.get("query_focus"),
@@ -234,10 +428,14 @@ def _validate_llm_plan(candidate: object, fallback: dict) -> dict | None:
             "location_name": candidate.get("location_name"),
             "vessel_type": candidate.get("vessel_type"),
         },
+        "planning_summary": candidate.get("planning_summary"),
         "planner": "gemini",
+        "planner_model": GEMINI_MODEL,
     }
+
     if result["language"] not in {"en", "ta", "hi"}:
         result["language"] = "en"
+
     if result["time_window"] not in {
         None,
         "today",
@@ -246,7 +444,11 @@ def _validate_llm_plan(candidate: object, fallback: dict) -> dict | None:
         "tonight",
     }:
         result["time_window"] = None
-    if not isinstance(result["clarification"], (str, type(None))):
+
+    if not isinstance(
+        result["clarification"],
+        (str, type(None)),
+    ):
         result["clarification"] = None
 
     if result["query_focus"] not in {
@@ -257,58 +459,156 @@ def _validate_llm_plan(candidate: object, fallback: dict) -> dict | None:
         result["query_focus"] = None
 
     allowed_hazards = {
-        "cyclone", "lightning", "high_wave", "strong_wind", "marine_warning",
+        "cyclone",
+        "lightning",
+        "high_wave",
+        "strong_wind",
+        "marine_warning",
     }
-    if not isinstance(result["requested_hazards"], list):
+
+    if not isinstance(
+        result["requested_hazards"],
+        list,
+    ):
         result["requested_hazards"] = []
+
     result["requested_hazards"] = [
-        item for item in result["requested_hazards"]
+        item
+        for item in result["requested_hazards"]
         if item in allowed_hazards
     ]
+
+    # Keep deterministic safety-sensitive extraction as a guardrail.
+    #
+    # Gemini is used for richer language/context understanding, but explicit
+    # hazard words and explicit supported time windows in the current query
+    # must not disappear because of a model formatting/classification error.
+    if fallback.get("query_focus") == "hazard_avoidance":
+        result["intent"] = "pfz"
+        result["required_agents"] = INTENT_AGENTS["pfz"]
+        result["query_focus"] = "hazard_avoidance"
+
+    if fallback.get("requested_hazards"):
+        result["requested_hazards"] = list(
+            dict.fromkeys(
+                result["requested_hazards"]
+                + fallback["requested_hazards"]
+            )
+        )
+
+    if fallback.get("time_window") is not None:
+        result["time_window"] = fallback["time_window"]
+
+    if not isinstance(
+        result.get("planning_summary"),
+        str,
+    ):
+        result["planning_summary"] = (
+            f"Resolved intent: {result['intent']}."
+        )
+
     return result
 
 
-async def plan_query(query: str, history: list[dict] | None = None) -> dict:
-    """Use Gemini when configured, otherwise retain the deterministic plan."""
+async def plan_query(
+    query: str,
+    history: list[dict] | None = None,
+) -> dict:
+    """
+    Gemini-first planner with deterministic safety fallback.
+
+    Uses the current Gemini Interactions REST API with JSON-schema structured
+    output. If Gemini is not configured, times out, returns malformed output,
+    or is rejected by the API, TARANG continues with the deterministic planner.
+    """
     fallback = _deterministic_plan(query)
     fallback["planner"] = "deterministic"
     fallback["entities"] = {
         "location_name": None,
         "vessel_type": None,
     }
+    fallback["planning_summary"] = (
+        f"Deterministic fallback resolved intent: {fallback['intent']}."
+    )
+
     if not GEMINI_API_KEY:
         return fallback
 
     endpoint = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_MODEL}:generateContent"
+        "https://generativelanguage.googleapis.com/"
+        "v1beta/interactions"
     )
+
     payload = {
-        "contents": [{"parts": [{"text": _llm_prompt(query, history or [])}]}],
-        "generationConfig": {
-            "temperature": 0,
-            "responseMimeType": "application/json",
+        "model": GEMINI_MODEL,
+        "input": _llm_prompt(
+            query,
+            history or [],
+        ),
+        # TARANG already stores its own conversation history in SQLite.
+        # Avoid depending on provider-side conversation storage.
+        "store": False,
+        "response_format": {
+            "type": "text",
+            "mime_type": "application/json",
+            "schema": PLANNER_RESPONSE_SCHEMA,
         },
     }
+
     try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                15.0,
+                connect=6.0,
+            )
+        ) as client:
             response = await client.post(
                 endpoint,
-                params={"key": GEMINI_API_KEY},
+                headers={
+                    "x-goog-api-key": GEMINI_API_KEY,
+                    "Content-Type": "application/json",
+                    "x-goog-api-client": (
+                        "tarang-marine-intelligence/1.0"
+                    ),
+                },
                 json=payload,
             )
             response.raise_for_status()
-            body = response.json()
-            text = body["candidates"][0]["content"]["parts"][0]["text"]
-            plan = _validate_llm_plan(json.loads(text), fallback)
-            if plan is not None:
-                return plan
-    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
-        # The deterministic planner is an intentional safety fallback when
-        # the optional intelligence service is unavailable or malformed.
-        pass
 
-    fallback["planner_status"] = "gemini_unavailable_or_invalid"
+            body = response.json()
+            raw_text = _extract_interaction_text(body)
+            candidate = json.loads(raw_text)
+
+            plan = _validate_llm_plan(
+                candidate,
+                fallback,
+            )
+
+            if plan is not None:
+                plan["planner_interaction_id"] = body.get("id")
+                return plan
+
+    except (
+        httpx.HTTPError,
+        KeyError,
+        IndexError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
+        # Never take the whole TARANG system down because the optional LLM
+        # planner is unavailable. The deterministic planner is the fallback.
+        fallback["planner_status"] = (
+            "gemini_unavailable_or_invalid"
+        )
+        fallback["planner_error_type"] = (
+            type(exc).__name__
+        )
+        return fallback
+
+    fallback["planner_status"] = (
+        "gemini_unavailable_or_invalid"
+    )
     return fallback
 
 

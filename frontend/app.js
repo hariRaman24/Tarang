@@ -491,7 +491,237 @@ function setRadarFrame(index) {
    EARTH-STYLE MAP UI
    ============================================================ */
 
+
+function injectEarthCriticalStyles() {
+  if (document.getElementById("tarangEarthCriticalStyles")) return;
+
+  const style = document.createElement("style");
+  style.id = "tarangEarthCriticalStyles";
+  style.textContent = `
+    .earth-map-shell {
+      position: relative !important;
+      overflow: hidden !important;
+      min-height: 680px !important;
+      border-radius: 14px !important;
+      background: #07141c !important;
+      box-shadow: inset 0 0 0 1px rgba(170,210,225,.18) !important;
+    }
+
+    .earth-map-shell #map {
+      height: 680px !important;
+      border: 0 !important;
+      border-radius: 14px !important;
+      background: #06151d !important;
+    }
+
+    .earth-map-shell .leaflet-tile-pane {
+      filter: brightness(.58) contrast(1.18) saturate(.83) !important;
+    }
+
+    .earth-map-shell::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 450;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 50% 48%, transparent 30%, rgba(2,11,16,.10) 70%, rgba(2,11,16,.30) 100%),
+        linear-gradient(180deg, rgba(3,12,17,.05), rgba(3,12,17,.18));
+    }
+
+    .earth-panel {
+      position: absolute !important;
+      z-index: 950 !important;
+      top: 18px !important;
+      padding: 12px !important;
+      border-radius: 12px !important;
+      background: rgba(15,29,39,.90) !important;
+      border: 1px solid rgba(178,207,220,.22) !important;
+      backdrop-filter: blur(12px) !important;
+      -webkit-backdrop-filter: blur(12px) !important;
+      box-shadow: 0 14px 34px rgba(0,0,0,.38) !important;
+      color: #f3f8fa !important;
+    }
+
+    .earth-panel-left {
+      left: 18px !important;
+      width: 178px !important;
+    }
+
+    .earth-panel-right {
+      right: 18px !important;
+      width: 205px !important;
+    }
+
+    .earth-panel-title {
+      display: block !important;
+      color: #aabcc5 !important;
+      font-size: 10px !important;
+      font-weight: 800 !important;
+      letter-spacing: .11em !important;
+      margin: 2px 5px 9px !important;
+    }
+
+    .earth-map-btn,
+    .earth-weather-btn,
+    .earth-overlay-btn {
+      width: 100% !important;
+      display: grid !important;
+      grid-template-columns: 25px 1fr auto !important;
+      align-items: center !important;
+      gap: 7px !important;
+      min-height: 34px !important;
+      padding: 7px 8px !important;
+      margin: 2px 0 !important;
+      border-radius: 8px !important;
+      color: #eef6f9 !important;
+      background: transparent !important;
+      border: 1px solid transparent !important;
+      text-align: left !important;
+      font-size: 10px !important;
+    }
+
+    .earth-map-btn:hover,
+    .earth-weather-btn:hover,
+    .earth-overlay-btn:hover {
+      background: rgba(92,148,174,.14) !important;
+    }
+
+    .earth-map-btn.active,
+    .earth-weather-btn.active,
+    .earth-overlay-btn.active {
+      background: rgba(73,135,164,.30) !important;
+      border-color: rgba(143,200,226,.22) !important;
+    }
+
+    .earth-overlay-btn i {
+      width: 9px !important;
+      height: 9px !important;
+      border-radius: 50% !important;
+      border: 1px solid #8198a3 !important;
+      background: transparent !important;
+    }
+
+    .earth-overlay-btn.active i {
+      background: #6ee0a4 !important;
+      border-color: #6ee0a4 !important;
+      box-shadow: 0 0 8px rgba(110,224,164,.62) !important;
+    }
+
+    .earth-timeline {
+      position: absolute !important;
+      z-index: 970 !important;
+      left: 50% !important;
+      bottom: 18px !important;
+      transform: translateX(-50%) !important;
+      width: min(650px, 64%) !important;
+      min-height: 58px !important;
+      display: grid !important;
+      grid-template-columns: 46px 138px 1fr 48px !important;
+      gap: 10px !important;
+      align-items: center !important;
+      padding: 8px 12px !important;
+      border-radius: 14px !important;
+      background: rgba(12,28,38,.92) !important;
+      border: 1px solid rgba(182,213,227,.24) !important;
+      backdrop-filter: blur(12px) !important;
+      -webkit-backdrop-filter: blur(12px) !important;
+      box-shadow: 0 14px 34px rgba(0,0,0,.40) !important;
+    }
+
+    .earth-map-brand {
+      position: absolute !important;
+      z-index: 955 !important;
+      left: 18px !important;
+      bottom: 92px !important;
+      display: flex !important;
+      flex-direction: column !important;
+      padding: 8px 11px !important;
+      border-radius: 9px !important;
+      background: rgba(12,28,38,.76) !important;
+      border: 1px solid rgba(182,213,227,.18) !important;
+      backdrop-filter: blur(10px) !important;
+    }
+
+    .earth-map-shell .forecast-card {
+      z-index: 960 !important;
+      right: 236px !important;
+      bottom: 94px !important;
+      width: 220px !important;
+      max-height: 355px !important;
+      border-radius: 11px !important;
+      background: rgba(9,25,34,.92) !important;
+      backdrop-filter: blur(12px) !important;
+    }
+
+    .earth-map-shell .leaflet-control-zoom {
+      z-index: 940 !important;
+      margin-left: 210px !important;
+      margin-top: 18px !important;
+    }
+
+    .earth-map-shell .leaflet-control-attribution {
+      z-index: 940 !important;
+      background: rgba(8,22,30,.68) !important;
+      color: #bdd0d8 !important;
+      font-size: 8px !important;
+      border-radius: 5px 0 0 0 !important;
+    }
+
+    .earth-map-shell .leaflet-control-attribution a {
+      color: #dfeaf0 !important;
+    }
+
+    @media (max-width: 900px) {
+      .earth-map-shell,
+      .earth-map-shell #map {
+        min-height: 630px !important;
+        height: 630px !important;
+      }
+
+      .earth-panel-left {
+        left: 10px !important;
+        width: 145px !important;
+      }
+
+      .earth-panel-right {
+        right: 10px !important;
+        width: 158px !important;
+      }
+
+      .earth-map-btn,
+      .earth-weather-btn,
+      .earth-overlay-btn {
+        font-size: 8px !important;
+        min-height: 30px !important;
+        padding: 5px 6px !important;
+      }
+
+      .earth-timeline {
+        width: calc(100% - 20px) !important;
+        bottom: 10px !important;
+        grid-template-columns: 38px 100px 1fr 40px !important;
+      }
+
+      .earth-map-shell .forecast-card {
+        right: 10px !important;
+        bottom: 82px !important;
+        width: 190px !important;
+        max-height: 270px !important;
+      }
+
+      .earth-map-shell .leaflet-control-zoom {
+        margin-left: 164px !important;
+      }
+    }
+  `;
+
+  document.head.appendChild(style);
+}
+
 function initEarthMapUI() {
+  injectEarthCriticalStyles();
+
   const shell = document.querySelector(".map-shell");
   if (!shell || document.getElementById("earthMapLeftPanel")) return;
 
@@ -569,10 +799,19 @@ function initEarthMapUI() {
   compass.className = "earth-map-brand";
   compass.innerHTML = `<b>~ TARANG</b><span>Marine Earth View</span>`;
 
+  const tools = document.createElement("div");
+  tools.className = "earth-quick-tools";
+  tools.innerHTML = `
+    <button id="earthIndiaViewBtn" title="India overview">INDIA</button>
+    <button id="earthFocusViewBtn" title="Focus selected location">FOCUS</button>
+    <button id="earthPanelsBtn" title="Show/hide map panels">☰</button>
+  `;
+
   shell.appendChild(left);
   shell.appendChild(right);
   shell.appendChild(timeline);
   shell.appendChild(compass);
+  shell.appendChild(tools);
 
   document.querySelectorAll(".earth-map-btn").forEach(btn => {
     btn.addEventListener("click", () => switchEarthBaseMap(btn.dataset.base));
@@ -597,6 +836,18 @@ function initEarthMapUI() {
 
   document.getElementById("earthPlayBtn").addEventListener("click", toggleEarthPlayback);
   document.getElementById("earthNowBtn").addEventListener("click", earthTimelineNow);
+
+  document.getElementById("earthIndiaViewBtn").addEventListener("click", () => {
+    map.setView([15.5, 79.5], 4);
+  });
+
+  document.getElementById("earthFocusViewBtn").addEventListener("click", () => {
+    map.setView([selectedLat, selectedLon], 8);
+  });
+
+  document.getElementById("earthPanelsBtn").addEventListener("click", () => {
+    shell.classList.toggle("earth-panels-hidden");
+  });
 
   applyEarthOverlayVisibility();
   configureEarthTimeline();

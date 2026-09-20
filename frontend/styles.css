@@ -1068,3 +1068,203 @@ select:focus, input:focus, textarea:focus {
   }
 }
 
+
+/* ============================================================
+   TARANG MARINE EARTH VIEW v3 — CLEAN PRESENTATION MODE
+   ============================================================ */
+
+.earth-compact-mode {
+  min-height: 620px !important;
+}
+
+.earth-compact-mode #map {
+  height: 620px !important;
+}
+
+/* Keep controls hidden until explicitly opened */
+.earth-compact-mode .earth-drawer {
+  top: 64px !important;
+  width: 190px !important;
+  max-height: 440px !important;
+  overflow-y: auto !important;
+  transition: opacity .16s ease, transform .16s ease !important;
+}
+
+.earth-compact-mode .earth-panel-left {
+  left: 16px !important;
+}
+
+.earth-compact-mode .earth-panel-right {
+  right: 16px !important;
+}
+
+.earth-compact-mode .earth-drawer-hidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(-8px) scale(.98) !important;
+}
+
+.earth-drawer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.earth-drawer-head .earth-panel-title {
+  margin-bottom: 0 !important;
+}
+
+.earth-drawer-close {
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(150,190,208,.25);
+  border-radius: 7px;
+  background: rgba(255,255,255,.04);
+  color: #dcebf1;
+  font-size: 15px;
+}
+
+.earth-group-label {
+  color: #668797;
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: .10em;
+  margin: 7px 6px 4px;
+}
+
+.earth-compact-toolbar {
+  left: 16px !important;
+  top: 14px !important;
+  transform: none !important;
+  background: rgba(8,25,34,.82) !important;
+  border-radius: 10px !important;
+  padding: 5px !important;
+}
+
+.earth-compact-toolbar button {
+  min-width: 36px !important;
+  padding: 7px 10px !important;
+  font-size: 8px !important;
+}
+
+.earth-compact-mode .earth-map-brand {
+  left: auto !important;
+  right: 16px !important;
+  bottom: 78px !important;
+  padding: 6px 8px !important;
+}
+
+.earth-compact-mode .earth-timeline {
+  width: min(560px, 58%) !important;
+  min-height: 48px !important;
+  bottom: 12px !important;
+  grid-template-columns: 36px 110px 1fr 40px !important;
+  padding: 6px 9px !important;
+}
+
+.earth-compact-mode .earth-play-btn,
+.earth-compact-mode .earth-now-btn {
+  height: 30px !important;
+}
+
+.earth-compact-mode .earth-time-label {
+  font-size: 8px !important;
+}
+
+.earth-compact-mode .forecast-card {
+  right: 16px !important;
+  bottom: 76px !important;
+  width: 205px !important;
+  max-height: 300px !important;
+}
+
+.earth-compact-mode .leaflet-control-zoom {
+  margin-left: 16px !important;
+  margin-top: 58px !important;
+}
+
+/* Remove unnecessary clutter from Leaflet layer button because TARANG now has its own controls */
+.earth-compact-mode .leaflet-control-layers {
+  display: none !important;
+}
+
+/* Keep the data marker compact */
+.earth-compact-mode .weather-map-badge {
+  transform: scale(.90);
+  transform-origin: center;
+}
+
+@media (max-width: 900px) {
+  .earth-compact-mode,
+  .earth-compact-mode #map {
+    height: 560px !important;
+    min-height: 560px !important;
+  }
+
+  .earth-compact-toolbar {
+    left: 8px !important;
+    top: 8px !important;
+  }
+
+  .earth-compact-toolbar button {
+    padding: 6px 7px !important;
+    font-size: 7px !important;
+  }
+
+  .earth-compact-mode .earth-drawer {
+    top: 50px !important;
+    width: 158px !important;
+    max-height: 340px !important;
+  }
+
+  .earth-compact-mode .earth-panel-left {
+    left: 8px !important;
+  }
+
+  .earth-compact-mode .earth-panel-right {
+    right: 8px !important;
+  }
+
+  .earth-compact-mode .earth-timeline {
+    width: calc(100% - 16px) !important;
+    grid-template-columns: 32px 84px 1fr 34px !important;
+  }
+
+  .earth-compact-mode .earth-map-brand {
+    display: none !important;
+  }
+
+  .earth-compact-mode .forecast-card {
+    right: 8px !important;
+    bottom: 70px !important;
+    width: 176px !important;
+    max-height: 230px !important;
+  }
+
+  .earth-compact-mode .leaflet-control-zoom {
+    margin-top: 50px !important;
+  }
+}
+
+@media (max-width: 560px) {
+  .earth-compact-mode,
+  .earth-compact-mode #map {
+    height: 510px !important;
+    min-height: 510px !important;
+  }
+
+  .earth-compact-toolbar button:nth-child(3),
+  .earth-compact-toolbar button:nth-child(4) {
+    display: none !important;
+  }
+
+  .earth-compact-mode .earth-drawer {
+    width: 150px !important;
+  }
+
+  .earth-compact-mode .forecast-card {
+    width: 165px !important;
+  }
+}
+

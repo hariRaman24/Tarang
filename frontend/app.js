@@ -140,11 +140,6 @@ const map = L.map("map", {
   zoomControl: true
 }).setView([13.05, 80.28], 7);
 
-const osm = L.tileLayer(
-  "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-  { maxZoom: 18, attribution: "© OpenStreetMap" }
-);
-
 const satellite = L.tileLayer(
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
   { maxZoom: 18, attribution: "Tiles © Esri" }
@@ -155,15 +150,19 @@ const ocean = L.tileLayer(
   { maxZoom: 16, attribution: "Esri Ocean" }
 );
 
+const street = L.tileLayer(
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+  { maxZoom: 18, attribution: "Tiles © Esri" }
+);
+
 satellite.addTo(map);
 
 const mapOverlays = {};
-
-L.control.layers(
+const layerControl = L.control.layers(
   {
     "Satellite": satellite,
     "Ocean": ocean,
-    "Street": osm
+    "Street": street
   },
   mapOverlays,
   { collapsed: true }
@@ -371,7 +370,7 @@ async function checkBackend() {
   const el = $("backendStatus");
 
   try {
-    const res = await fetch(`${API_BASE}/api/status`, { cache: "no-store" });
+    const res = await fetch(`${API_BASE}/api/health`, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     el.textContent = `Backend: ${data.status || "online"}`;
@@ -388,26 +387,30 @@ async function addRainRadar() {
       "https://api.rainviewer.com/public/weather-maps.json",
       { cache: "no-store" }
     );
+    if (!res.ok) throw new Error(`RainViewer HTTP ${res.status}`);
+
     const data = await res.json();
     const frames = data?.radar?.past || [];
     const latest = frames.at(-1);
     if (!latest?.path) return;
 
+    const host = data?.host || "https://tilecache.rainviewer.com";
     radarLayer = L.tileLayer(
-      `https://tilecache.rainviewer.com${latest.path}/256/{z}/{x}/{y}/2/1_1.png`,
+      `${host}${latest.path}/256/{z}/{x}/{y}/2/1_1.png`,
       {
-        opacity: 0.55,
+        opacity: 0.58,
         maxNativeZoom: 7,
         maxZoom: 18,
         attribution: "Weather radar © RainViewer"
       }
     );
 
-    // We add it by default but the user can remove it from the layer control
-    // only after reload. This keeps the implementation dependency-free.
     radarLayer.addTo(map);
-  } catch {
-    // Radar is optional; map must still work without it.
+    if (typeof layerControl !== "undefined") {
+      layerControl.addOverlay(radarLayer, "Live rain radar");
+    }
+  } catch (err) {
+    console.warn("Rain radar unavailable", err);
   }
 }
 
@@ -529,8 +532,13 @@ function renderAnswer(data) {
   latestResponse = data;
 
   $("answerCard").classList.remove("hidden");
-  $("answerText").textContent =
+
+  const fullAnswer =
     data?.answer || data?.synthesis?.answer || "No answer returned.";
+
+  $("answerText").innerHTML = buildQuickAnswerHtml(data);
+  renderFullExplanation(fullAnswer);
+  renderPfzCards(data);
 
   const detected = data?.language || detectLanguage($("queryInput").value);
   $("answerLangBadge").textContent = `LANG: ${detected.toUpperCase()}`;
@@ -546,6 +554,151 @@ function renderAnswer(data) {
   renderAlerts(data);
   renderMapData(data);
   setupForecast(data);
+}
+
+function buildQuickAnswerHtml(data) {
+  const plan = data?.plan || {};
+  const geo = data?.agents?.geospatial?.data || {};
+  const risk = data?.agents?.risk?.data || {};
+  const w = data?.agents?.weather?.data || {};
+  const candidates = geo.ranked_closest || [];
+  const vesselRange = Number($("rangeKm").value || 25);
+  const intent = plan.intent || "";
+
+  if (intent === "pfz") {
+    if (!candidates.length) {
+      return `<div class="quick-title">PFZ status</div>` +
+        `<div class="quick-main">No current official INCOIS PFZ geometry is available for this query.</div>` +
+        `<div class="quick-note">TARANG does not generate fake PFZ coordinates when the official source is unavailable.</div>`;
+    }
+
+    const c = candidates[0];
+    const within = c.within_vessel_range === true;
+    const rangeText = within
+      ? `within the configured ${vesselRange} km vessel range`
+      : `outside the configured ${vesselRange} km vessel range`;
+
+    return `<div class="quick-title">Nearest official PFZ</div>` +
+      `<div class="quick-main">${esc(c.name || c.uid || "PFZ")} — <b>${esc(safeText(c.distance_km))} km</b> from ${esc(selectedLocationName)}.</div>` +
+      `<div class="quick-status ${within ? "ok" : "warn"}">${within ? "WITHIN RANGE" : "OUTSIDE RANGE"}</div>` +
+      `<div class="quick-note">It is ${rangeText}. The PFZ locations are plotted on the map below. Distance is straight-line/geodesic, not a navigable route.</div>`;
+  }
+
+  if (intent === "safety" || intent === "alerts") {
+    const verdict = risk.verdict || "UNAVAILABLE";
+    const assessment = w.assessment || {};
+    const wave = assessment.wave_height_m ?? w.wave_height_m;
+    const wind = assessment.wind_speed_kmh ?? w.wind_speed_kmh;
+    const gust = assessment.wind_gusts_kmh ?? w.wind_gusts_kmh;
+
+    return `<div class="quick-title">Safety decision</div>` +
+      `<div class="quick-main"><b>${esc(verdict)}</b></div>` +
+      `<div class="quick-metrics">` +
+      `<span>Wave ${esc(safeText(wave))} m</span>` +
+      `<span>Wind ${esc(safeText(wind))} km/h</span>` +
+      `<span>Gust ${esc(safeText(gust))} km/h</span>` +
+      `</div>` +
+      `<div class="quick-note">Official warning coverage and vessel thresholds are kept separate from model forecast values.</div>`;
+  }
+
+  if (intent === "conditions") {
+    return `<div class="quick-title">Current marine conditions</div>` +
+      `<div class="quick-metrics">` +
+      `<span>🌡 ${esc(safeText(w.air_temperature_c))}°C</span>` +
+      `<span>☁ ${esc(safeText(w.cloud_cover_percent))}%</span>` +
+      `<span>🌧 ${esc(safeText(w.rain_mm))} mm</span>` +
+      `<span>💨 ${esc(safeText(w.wind_speed_kmh))} km/h</span>` +
+      `<span>🌊 ${esc(safeText(w.wave_height_m))} m</span>` +
+      `<span>SST ${esc(safeText(w.sea_surface_temperature_c))}°C</span>` +
+      `</div>`;
+  }
+
+  if (intent === "route") {
+    const route = data?.agents?.route?.data || {};
+    const chosen = route.chosen || {};
+    const dest = chosen.destination || chosen.name || chosen.label || "recommended corridor";
+    return `<div class="quick-title">Route guidance</div>` +
+      `<div class="quick-main">${esc(dest)}</div>` +
+      `<div class="quick-note">Route output is advisory and not navigation-grade. Full agent explanation is available below.</div>`;
+  }
+
+  return `<div class="quick-title">TARANG answer</div>` +
+    `<div class="quick-main">${esc(fullSentencePreview(data?.answer || "Result available."))}</div>`;
+}
+
+function fullSentencePreview(text) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  if (clean.length <= 260) return clean;
+  return clean.slice(0, 257) + "…";
+}
+
+function renderFullExplanation(fullAnswer) {
+  let details = document.getElementById("fullAgentExplanation");
+  if (!details) {
+    details = document.createElement("details");
+    details.id = "fullAgentExplanation";
+    details.className = "full-explanation";
+    $("answerText").insertAdjacentElement("afterend", details);
+  }
+
+  details.innerHTML =
+    `<summary>Full agent explanation</summary>` +
+    `<div class="full-explanation-body">${esc(fullAnswer)}</div>`;
+}
+
+function renderPfzCards(data) {
+  let wrap = document.getElementById("pfzCards");
+  if (!wrap) {
+    wrap = document.createElement("div");
+    wrap.id = "pfzCards";
+    wrap.className = "pfz-cards";
+    const anchor = document.getElementById("fullAgentExplanation");
+    anchor.insertAdjacentElement("afterend", wrap);
+  }
+
+  const plan = data?.plan || {};
+  const candidates = data?.agents?.geospatial?.data?.ranked_closest || [];
+
+  if (plan.intent !== "pfz" || !candidates.length) {
+    wrap.classList.add("hidden");
+    wrap.innerHTML = "";
+    return;
+  }
+
+  wrap.classList.remove("hidden");
+  wrap.innerHTML = `<div class="subheading">Potential Fishing Zones</div>` +
+    candidates.slice(0, 5).map((c, i) => {
+      const landing = c.landing_centre || {};
+      const within = c.within_vessel_range === true;
+      return `<div class="pfz-card">` +
+        `<div class="pfz-card-rank">#${i + 1}</div>` +
+        `<div class="pfz-card-body">` +
+        `<div class="pfz-card-name">${esc(c.name || c.uid || "PFZ")}</div>` +
+        `<div class="pfz-card-meta">${esc(safeText(c.distance_km))} km from ${esc(selectedLocationName)} · ` +
+        `<span class="${within ? "text-good" : "text-warn"}">${within ? "WITHIN RANGE" : "OUTSIDE RANGE"}</span></div>` +
+        (landing.name ? `<div class="pfz-card-meta">Landing centre: ${esc(landing.name)} · ${esc(safeText(landing.distance_from_pfz_km))} km from PFZ point</div>` : "") +
+        `</div>` +
+        `<button class="pfz-map-btn" data-pfz-index="${i}">Show on map</button>` +
+        `</div>`;
+    }).join("");
+
+  wrap.querySelectorAll(".pfz-map-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.pfzIndex);
+      const c = candidates[idx];
+      const lat = candidateLat(c);
+      const lon = candidateLon(c);
+      if (Number.isFinite(lat) && Number.isFinite(lon)) {
+        map.setView([lat, lon], 10);
+        pfzLayer.eachLayer(layer => {
+          const ll = layer.getLatLng?.();
+          if (ll && Math.abs(ll.lat - lat) < 0.0001 && Math.abs(ll.lng - lon) < 0.0001) {
+            layer.openPopup?.();
+          }
+        });
+      }
+    });
+  });
 }
 
 function renderRecommendation(data) {
@@ -764,12 +917,23 @@ function candidateLon(c) {
   );
 }
 
+let pfzReferenceLine = null;
+let weatherPointMarker = null;
+
 function renderMapData(data) {
   pfzLayer.clearLayers();
 
   if (routeLayer) {
     routeLayer.remove();
     routeLayer = null;
+  }
+  if (pfzReferenceLine) {
+    pfzReferenceLine.remove();
+    pfzReferenceLine = null;
+  }
+  if (weatherPointMarker) {
+    weatherPointMarker.remove();
+    weatherPointMarker = null;
   }
 
   const loc = data?.location || {};
@@ -780,9 +944,10 @@ function renderMapData(data) {
     userMarker
       .setLatLng([lat, lon])
       .bindPopup(loc.matched_station || selectedLocationName);
-
-    map.setView([lat, lon], 8);
   }
+
+  const bounds = [];
+  if (Number.isFinite(lat) && Number.isFinite(lon)) bounds.push([lat, lon]);
 
   const candidates = pfzCandidates(data).slice(0, 10);
 
@@ -792,33 +957,48 @@ function renderMapData(data) {
 
     if (!Number.isFinite(plat) || !Number.isFinite(plon)) return;
 
+    bounds.push([plat, plon]);
+
     const within = c.within_vessel_range === true;
     const name = c.name || c.uid || c.sector || `PFZ ${idx + 1}`;
 
     const marker = L.circleMarker(
       [plat, plon],
       {
-        radius: idx === 0 ? 7 : 6,
+        radius: idx === 0 ? 9 : 7,
         weight: 2,
-        color: within ? "#67d391" : "#9bb2bd",
-        fillColor: within ? "#67d391" : "#8099a5",
-        fillOpacity: .65
+        color: within ? "#67d391" : "#f4a62a",
+        fillColor: within ? "#67d391" : "#f4a62a",
+        fillOpacity: .8
       }
     );
 
-    const landing = c.nearest_landing_centre || c.landing_centre || {};
-    const landingText =
-      landing.name || landing.lc_name || c.nearest_landing_centre_name || "";
+    const landing = c.landing_centre || {};
 
     marker.bindPopup(
       `<b>${esc(name)}</b><br>` +
-      `Distance: ${esc(c.distance_km)} km<br>` +
-      `Range: ${within ? "WITHIN" : "OUTSIDE"}<br>` +
-      (landingText ? `Landing centre: ${esc(landingText)}<br>` : "")
+      `Distance from selected location: ${esc(safeText(c.distance_km))} km<br>` +
+      `Vessel range: ${within ? "WITHIN" : "OUTSIDE"}<br>` +
+      (landing.name ? `Landing centre: ${esc(landing.name)}<br>` : "") +
+      `<small>Straight-line/geodesic reference only; not a navigable route.</small>`
     );
 
     marker.addTo(pfzLayer);
   });
+
+  if (candidates.length) {
+    const firstLat = candidateLat(candidates[0]);
+    const firstLon = candidateLon(candidates[0]);
+    if (
+      Number.isFinite(lat) && Number.isFinite(lon) &&
+      Number.isFinite(firstLat) && Number.isFinite(firstLon)
+    ) {
+      pfzReferenceLine = L.polyline(
+        [[lat, lon], [firstLat, firstLon]],
+        { color: "#f4a62a", weight: 2, dashArray: "6 6", opacity: .8 }
+      ).addTo(map);
+    }
+  }
 
   const route = data?.agents?.route?.data || {};
   const chosen = route.chosen || {};
@@ -836,11 +1016,30 @@ function renderMapData(data) {
   if (points.length >= 2) {
     routeLayer = L.polyline(points, {
       weight: 3,
-      color: "#f4a62a",
-      dashArray: "6 5"
+      color: "#45a9ff",
+      dashArray: "8 5"
     }).addTo(map);
+    points.forEach(p => bounds.push(p));
+  }
 
-    map.fitBounds(routeLayer.getBounds(), { padding: [30,30] });
+  const w = data?.agents?.weather?.data || {};
+  if (Number.isFinite(lat) && Number.isFinite(lon) && (w.cloud_cover_percent != null || w.rain_mm != null || w.wind_speed_kmh != null)) {
+    const html = `<div class="weather-map-badge">` +
+      `<div>☁ ${esc(safeText(w.cloud_cover_percent))}%</div>` +
+      `<div>🌧 ${esc(safeText(w.rain_mm))} mm</div>` +
+      `<div>💨 ${esc(safeText(w.wind_speed_kmh))} km/h</div>` +
+      `<div>🌊 ${esc(safeText(w.wave_height_m))} m</div>` +
+      `</div>`;
+    weatherPointMarker = L.marker([lat, lon], {
+      icon: L.divIcon({ className: "weather-map-icon", html, iconSize: [110, 52], iconAnchor: [-8, 26] }),
+      interactive: false
+    }).addTo(map);
+  }
+
+  if (bounds.length >= 2) {
+    map.fitBounds(bounds, { padding: [45, 45], maxZoom: 9 });
+  } else if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    map.setView([lat, lon], 8);
   }
 }
 
@@ -869,6 +1068,185 @@ function arrVal(arr, idx) {
   return Array.isArray(arr) ? arr[idx] : undefined;
 }
 
+async function hydrateWeatherForDisplay(data) {
+  const weatherAgent = data?.agents?.weather;
+  const existing = weatherAgent?.data || {};
+
+  if (Array.isArray(existing.hourly_time) && existing.hourly_time.length >= 12) {
+    return data;
+  }
+
+  try {
+    const fallback = await fetchBrowserOpenMeteo(selectedLat, selectedLon);
+    data.agents = data.agents || {};
+    data.agents.weather = data.agents.weather || {};
+    data.agents.weather.display_fallback = true;
+    data.agents.weather.display_fallback_source = "Open-Meteo browser fallback";
+    data.agents.weather.data = {
+      ...existing,
+      ...fallback,
+      assessment: existing.assessment || {
+        status: "DISPLAY_FALLBACK",
+        label: "browser forecast display"
+      }
+    };
+
+    data.alerts = Array.isArray(data.alerts) ? data.alerts : [];
+    data.alerts.push(
+      "Forecast visualization recovered directly in the browser from Open-Meteo. This restores the timeline display but does not change the backend safety verdict."
+    );
+  } catch (err) {
+    console.warn("Browser weather fallback failed", err);
+  }
+
+  return data;
+}
+
+async function fetchBrowserOpenMeteo(lat, lon) {
+  const weatherVars = [
+    "temperature_2m","relative_humidity_2m","apparent_temperature",
+    "precipitation","rain","weather_code","cloud_cover","pressure_msl",
+    "visibility","wind_speed_10m","wind_direction_10m","wind_gusts_10m"
+  ].join(",");
+
+  const marineVars = [
+    "wave_height","wave_direction","wave_period","sea_surface_temperature",
+    "sea_level_height_msl","ocean_current_velocity","ocean_current_direction"
+  ].join(",");
+
+  const weatherUrl = new URL("https://api.open-meteo.com/v1/forecast");
+  weatherUrl.searchParams.set("latitude", lat);
+  weatherUrl.searchParams.set("longitude", lon);
+  weatherUrl.searchParams.set("current", weatherVars);
+  weatherUrl.searchParams.set("hourly", weatherVars);
+  weatherUrl.searchParams.set("forecast_days", "3");
+  weatherUrl.searchParams.set("timezone", "auto");
+
+  const marineUrl = new URL("https://marine-api.open-meteo.com/v1/marine");
+  marineUrl.searchParams.set("latitude", lat);
+  marineUrl.searchParams.set("longitude", lon);
+  marineUrl.searchParams.set("current", marineVars);
+  marineUrl.searchParams.set("hourly", marineVars);
+  marineUrl.searchParams.set("forecast_days", "3");
+  marineUrl.searchParams.set("timezone", "auto");
+  marineUrl.searchParams.set("cell_selection", "sea");
+
+  const [wr, mr] = await Promise.all([fetch(weatherUrl), fetch(marineUrl)]);
+  if (!wr.ok) throw new Error(`Weather HTTP ${wr.status}`);
+  if (!mr.ok) throw new Error(`Marine HTTP ${mr.status}`);
+
+  const weather = await wr.json();
+  const marine = await mr.json();
+  const wc = weather.current || {};
+  const wh = weather.hourly || {};
+  const mc = marine.current || {};
+  const mh = marine.hourly || {};
+
+  return {
+    air_temperature_c: wc.temperature_2m,
+    apparent_temperature_c: wc.apparent_temperature,
+    relative_humidity_percent: wc.relative_humidity_2m,
+    precipitation_mm: wc.precipitation,
+    rain_mm: wc.rain,
+    cloud_cover_percent: wc.cloud_cover,
+    pressure_msl_hpa: wc.pressure_msl,
+    visibility_m: wc.visibility,
+    visibility_km: Number.isFinite(Number(wc.visibility)) ? Number(wc.visibility) / 1000 : null,
+    wind_speed_kmh: wc.wind_speed_10m,
+    wind_direction_deg: wc.wind_direction_10m,
+    wind_gusts_kmh: wc.wind_gusts_10m,
+    weather_code: wc.weather_code,
+    weather_condition: weatherCodeText(wc.weather_code),
+
+    sea_surface_temperature_c: mc.sea_surface_temperature,
+    wave_height_m: mc.wave_height,
+    wave_direction_deg: mc.wave_direction,
+    wave_period_s: mc.wave_period,
+    sea_level_height_msl_m: mc.sea_level_height_msl,
+    ocean_current_velocity_kmh: mc.ocean_current_velocity,
+    ocean_current_direction_deg: mc.ocean_current_direction,
+
+    hourly_time: wh.time || mh.time || [],
+    hourly_temperature: wh.temperature_2m || [],
+    hourly_apparent_temperature: wh.apparent_temperature || [],
+    hourly_humidity: wh.relative_humidity_2m || [],
+    hourly_precipitation: wh.precipitation || [],
+    hourly_rain: wh.rain || [],
+    hourly_cloud_cover: wh.cloud_cover || [],
+    hourly_pressure_msl: wh.pressure_msl || [],
+    hourly_visibility: wh.visibility || [],
+    hourly_wind: wh.wind_speed_10m || [],
+    hourly_wind_gusts: wh.wind_gusts_10m || [],
+    hourly_weather_code: wh.weather_code || [],
+    hourly_weather_condition: (wh.weather_code || []).map(weatherCodeText),
+
+    hourly_wave: mh.wave_height || [],
+    hourly_sst: mh.sea_surface_temperature || [],
+    hourly_wave_direction: mh.wave_direction || [],
+    hourly_wave_period: mh.wave_period || [],
+    hourly_sea_level: mh.sea_level_height_msl || [],
+    hourly_current_velocity: mh.ocean_current_velocity || [],
+    hourly_current_direction: mh.ocean_current_direction || [],
+
+    frontend_display_source: "Open-Meteo direct browser fallback"
+  };
+}
+
+function weatherCodeText(code) {
+  const c = Number(code);
+  if (c === 0) return "Clear sky";
+  if ([1,2,3].includes(c)) return "Cloudy / partly cloudy";
+  if ([45,48].includes(c)) return "Fog";
+  if ([51,53,55,56,57].includes(c)) return "Drizzle";
+  if ([61,63,65,66,67].includes(c)) return "Rain";
+  if ([71,73,75,77].includes(c)) return "Snow";
+  if ([80,81,82].includes(c)) return "Rain showers";
+  if ([95,96,99].includes(c)) return "Thunderstorm";
+  return "Marine forecast";
+}
+
+function ensureForecastTable() {
+  let wrap = document.getElementById("forecastTableWrap");
+  if (!wrap) {
+    wrap = document.createElement("div");
+    wrap.id = "forecastTableWrap";
+    wrap.className = "forecast-table-wrap";
+    $("forecastReadout").insertAdjacentElement("afterend", wrap);
+  }
+  return wrap;
+}
+
+function renderForecastTable(w, startIndex) {
+  const wrap = ensureForecastTable();
+  const times = w.hourly_time || [];
+  if (!times.length) {
+    wrap.innerHTML = `<div class="muted small">24-hour timeline unavailable.</div>`;
+    return;
+  }
+
+  const end = Math.min(times.length, startIndex + 24);
+  const rows = [];
+
+  for (let i = startIndex; i < end; i++) {
+    const time = String(times[i] || "");
+    const hh = time.includes("T") ? time.split("T")[1]?.slice(0,5) : time;
+    rows.push(`<tr>` +
+      `<td>${esc(hh)}</td>` +
+      `<td>${esc(safeText(arrVal(w.hourly_temperature, i)))}°</td>` +
+      `<td>${esc(safeText(arrVal(w.hourly_rain, i)))} mm</td>` +
+      `<td>${esc(safeText(arrVal(w.hourly_cloud_cover, i)))}%</td>` +
+      `<td>${esc(safeText(arrVal(w.hourly_wind, i)))}</td>` +
+      `<td>${esc(safeText(arrVal(w.hourly_wave, i)))}</td>` +
+      `<td>${esc(safeText(arrVal(w.hourly_sst, i)))}</td>` +
+      `</tr>`);
+  }
+
+  wrap.innerHTML = `<div class="forecast-table-title">NEXT 24 HOURS</div>` +
+    `<div class="forecast-table-scroll"><table class="forecast-table">` +
+    `<thead><tr><th>Time</th><th>Temp °C</th><th>Rain</th><th>Cloud</th><th>Wind km/h</th><th>Wave m</th><th>SST °C</th></tr></thead>` +
+    `<tbody>${rows.join("")}</tbody></table></div>`;
+}
+
 function setupForecast(data) {
   const w = data?.agents?.weather?.data || {};
   const times = w.hourly_time || [];
@@ -881,6 +1259,7 @@ function setupForecast(data) {
     $("forecastReadout").textContent = "Hourly forecast unavailable.";
     $("forecastCard").classList.add("hidden");
     drawTrendChart(w, 0, 0);
+    renderForecastTable(w, 0);
     return;
   }
 
@@ -928,6 +1307,7 @@ function setupForecast(data) {
   };
 
   slider.oninput = update;
+  renderForecastTable(w, startIndex);
   update();
 }
 
@@ -1183,6 +1563,8 @@ async function askTarang() {
       throw new Error(data?.detail || `HTTP ${res.status}`);
     }
 
+    $("requestState").textContent = "Query complete. Loading forecast visualization…";
+    await hydrateWeatherForDisplay(data);
     $("requestState").textContent = "Query complete.";
     renderAnswer(data);
   } catch (err) {

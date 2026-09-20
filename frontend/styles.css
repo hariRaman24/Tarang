@@ -1015,3 +1015,56 @@ select:focus, input:focus, textarea:focus {
   }
 }
 
+
+/* Earth View v2 presentation polish */
+.earth-quick-tools {
+  position: absolute;
+  z-index: 965;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(12,28,38,.84);
+  border: 1px solid rgba(182,213,227,.22);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 30px rgba(0,0,0,.32);
+}
+
+.earth-quick-tools button {
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(134,184,208,.22);
+  color: #eaf5f9;
+  background: rgba(69,128,154,.12);
+  font-size: 8px;
+  letter-spacing: .05em;
+}
+
+.earth-quick-tools button:hover {
+  background: rgba(73,151,184,.26);
+}
+
+.earth-panels-hidden .earth-panel,
+.earth-panels-hidden .earth-map-brand {
+  display: none !important;
+}
+
+.earth-panels-hidden .leaflet-control-zoom {
+  margin-left: 18px !important;
+}
+
+@media (max-width: 760px) {
+  .earth-quick-tools {
+    top: 8px;
+    gap: 3px;
+    padding: 4px;
+  }
+  .earth-quick-tools button {
+    padding: 5px 7px;
+    font-size: 7px;
+  }
+}
+

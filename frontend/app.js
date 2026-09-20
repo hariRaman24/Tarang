@@ -136,6 +136,32 @@ let currentForecastIndex = 0;
 let radarLayer = null;
 let routeLayer = null;
 
+/* ============================================================
+   EARTH-STYLE MAP STATE
+   ============================================================ */
+let radarFrames = [];
+let radarHost = "https://tilecache.rainviewer.com";
+let radarFrameIndex = -1;
+let mapPlaybackTimer = null;
+let activeMapMode = "radar";
+let activeBaseMapName = "satellite";
+
+const landingCentresLayer = L.layerGroup();
+const vesselRangeLayer = L.layerGroup();
+const oceanEvidenceLayer = L.layerGroup();
+const warningMapLayer = L.layerGroup();
+const weatherMetricLayer = L.layerGroup();
+
+const mapOverlayState = {
+  radar: true,
+  pfz: true,
+  landing: false,
+  vesselRange: true,
+  route: true,
+  oceanEvidence: false,
+  warnings: true
+};
+
 const map = L.map("map", {
   zoomControl: true
 }).setView([13.05, 80.28], 7);
@@ -169,6 +195,12 @@ const layerControl = L.control.layers(
 ).addTo(map);
 
 const pfzLayer = L.layerGroup().addTo(map);
+landingCentresLayer.addTo(map);
+vesselRangeLayer.addTo(map);
+oceanEvidenceLayer.addTo(map);
+warningMapLayer.addTo(map);
+weatherMetricLayer.addTo(map);
+
 let userMarker = L.marker([selectedLat, selectedLon])
   .addTo(map)
   .bindPopup("Chennai");
@@ -370,7 +402,7 @@ async function checkBackend() {
   const el = $("backendStatus");
 
   try {
-    const res = await fetch(`${API_BASE}/api/health`, { cache: "no-store" });
+    const res = await fetch(`${API_BASE}/api/status`, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     el.textContent = `Backend: ${data.status || "online"}`;
@@ -390,29 +422,460 @@ async function addRainRadar() {
     if (!res.ok) throw new Error(`RainViewer HTTP ${res.status}`);
 
     const data = await res.json();
-    const frames = data?.radar?.past || [];
-    const latest = frames.at(-1);
-    if (!latest?.path) return;
+    radarFrames = [
+      ...(data?.radar?.past || []),
+      ...(data?.radar?.nowcast || [])
+    ];
+    radarHost = data?.host || "https://tilecache.rainviewer.com";
 
-    const host = data?.host || "https://tilecache.rainviewer.com";
-    radarLayer = L.tileLayer(
-      `${host}${latest.path}/256/{z}/{x}/{y}/2/1_1.png`,
-      {
-        opacity: 0.58,
-        maxNativeZoom: 7,
-        maxZoom: 18,
-        attribution: "Weather radar © RainViewer"
-      }
-    );
+    if (!radarFrames.length) return;
 
-    radarLayer.addTo(map);
-    if (typeof layerControl !== "undefined") {
-      layerControl.addOverlay(radarLayer, "Live rain radar");
+    radarFrameIndex = radarFrames.length - 1;
+    setRadarFrame(radarFrameIndex);
+
+    if (!mapOverlayState.radar && radarLayer && map.hasLayer(radarLayer)) {
+      map.removeLayer(radarLayer);
     }
+
+    configureEarthTimeline();
   } catch (err) {
     console.warn("Rain radar unavailable", err);
+    const status = document.getElementById("earthTimelineLabel");
+    if (status && activeMapMode === "radar") {
+      status.textContent = "Radar unavailable";
+    }
   }
 }
+
+function setRadarFrame(index) {
+  if (!radarFrames.length) return;
+
+  radarFrameIndex = Math.max(0, Math.min(index, radarFrames.length - 1));
+  const frame = radarFrames[radarFrameIndex];
+  if (!frame?.path) return;
+
+  const url = `${radarHost}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`;
+
+  if (!radarLayer) {
+    radarLayer = L.tileLayer(url, {
+      opacity: 0.58,
+      maxNativeZoom: 7,
+      maxZoom: 18,
+      attribution: "Weather radar © RainViewer"
+    });
+  } else {
+    radarLayer.setUrl(url);
+  }
+
+  if (mapOverlayState.radar && !map.hasLayer(radarLayer)) {
+    radarLayer.addTo(map);
+  }
+
+  if (activeMapMode === "radar") {
+    const label = document.getElementById("earthTimelineLabel");
+    if (label) {
+      const ts = Number(frame.time) * 1000;
+      label.textContent = Number.isFinite(ts)
+        ? new Date(ts).toLocaleString([], {
+            day: "2-digit",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit"
+          })
+        : "Live radar";
+    }
+  }
+}
+
+/* ============================================================
+   EARTH-STYLE MAP UI
+   ============================================================ */
+
+function initEarthMapUI() {
+  const shell = document.querySelector(".map-shell");
+  if (!shell || document.getElementById("earthMapLeftPanel")) return;
+
+  shell.classList.add("earth-map-shell");
+
+  const left = document.createElement("div");
+  left.id = "earthMapLeftPanel";
+  left.className = "earth-panel earth-panel-left";
+  left.innerHTML = `
+    <div class="earth-panel-title">LIVE MAPS</div>
+
+    <button class="earth-map-btn active" data-base="satellite">
+      <span>◉</span><b>Satellite</b>
+    </button>
+    <button class="earth-map-btn" data-base="ocean">
+      <span>≈</span><b>Ocean</b>
+    </button>
+    <button class="earth-map-btn" data-base="street">
+      <span>▦</span><b>Street</b>
+    </button>
+
+    <div class="earth-panel-separator"></div>
+    <div class="earth-panel-title">WEATHER</div>
+
+    <button class="earth-weather-btn active" data-mode="radar">
+      <span>◔</span><b>Radar</b>
+    </button>
+    <button class="earth-weather-btn" data-mode="precipitation">
+      <span>☂</span><b>Precipitation</b>
+    </button>
+    <button class="earth-weather-btn" data-mode="wind">
+      <span>≋</span><b>Wind</b>
+    </button>
+    <button class="earth-weather-btn" data-mode="temperature">
+      <span>♨</span><b>Temperature</b>
+    </button>
+    <button class="earth-weather-btn" data-mode="humidity">
+      <span>◌</span><b>Humidity</b>
+    </button>
+    <button class="earth-weather-btn" data-mode="pressure">
+      <span>◎</span><b>Pressure</b>
+    </button>
+
+    <div class="earth-point-note">Forecast weather layers are point-based at the selected location; radar is a real map overlay.</div>
+  `;
+
+  const right = document.createElement("div");
+  right.id = "earthMapRightPanel";
+  right.className = "earth-panel earth-panel-right";
+  right.innerHTML = `
+    <div class="earth-panel-title">MARINE OVERLAYS</div>
+    ${earthToggleHtml("radar", "◔", "Radar", true)}
+    ${earthToggleHtml("pfz", "●", "PFZ", true)}
+    ${earthToggleHtml("landing", "⚓", "Landing Centres", false)}
+    ${earthToggleHtml("vesselRange", "◎", "Vessel Range", true)}
+    ${earthToggleHtml("route", "↗", "Route", true)}
+    ${earthToggleHtml("oceanEvidence", "≈", "SST / CHL Evidence", false)}
+    ${earthToggleHtml("warnings", "⚠", "Warnings", true)}
+  `;
+
+  const timeline = document.createElement("div");
+  timeline.id = "earthTimeline";
+  timeline.className = "earth-timeline";
+  timeline.innerHTML = `
+    <button id="earthPlayBtn" class="earth-play-btn" title="Play timeline">▶</button>
+    <div class="earth-time-readout">
+      <div id="earthTimelineMode" class="earth-time-mode">RADAR</div>
+      <div id="earthTimelineLabel" class="earth-time-label">Loading radar…</div>
+    </div>
+    <input id="earthTimeSlider" class="earth-time-slider" type="range" min="0" max="0" value="0">
+    <button id="earthNowBtn" class="earth-now-btn">NOW</button>
+  `;
+
+  const compass = document.createElement("div");
+  compass.className = "earth-map-brand";
+  compass.innerHTML = `<b>~ TARANG</b><span>Marine Earth View</span>`;
+
+  shell.appendChild(left);
+  shell.appendChild(right);
+  shell.appendChild(timeline);
+  shell.appendChild(compass);
+
+  document.querySelectorAll(".earth-map-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchEarthBaseMap(btn.dataset.base));
+  });
+
+  document.querySelectorAll(".earth-weather-btn").forEach(btn => {
+    btn.addEventListener("click", () => setEarthWeatherMode(btn.dataset.mode));
+  });
+
+  right.querySelectorAll("[data-overlay]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.overlay;
+      mapOverlayState[key] = !mapOverlayState[key];
+      btn.classList.toggle("active", mapOverlayState[key]);
+      applyEarthOverlayVisibility();
+    });
+  });
+
+  document.getElementById("earthTimeSlider").addEventListener("input", event => {
+    earthTimelineInput(Number(event.target.value || 0));
+  });
+
+  document.getElementById("earthPlayBtn").addEventListener("click", toggleEarthPlayback);
+  document.getElementById("earthNowBtn").addEventListener("click", earthTimelineNow);
+
+  applyEarthOverlayVisibility();
+  configureEarthTimeline();
+}
+
+function earthToggleHtml(key, icon, label, active) {
+  return `<button class="earth-overlay-btn ${active ? "active" : ""}" data-overlay="${key}">
+    <span>${icon}</span><b>${label}</b><i></i>
+  </button>`;
+}
+
+function switchEarthBaseMap(name) {
+  [satellite, ocean, street].forEach(layer => {
+    if (map.hasLayer(layer)) map.removeLayer(layer);
+  });
+
+  const chosen =
+    name === "ocean" ? ocean :
+    name === "street" ? street :
+    satellite;
+
+  chosen.addTo(map);
+  activeBaseMapName = name;
+
+  document.querySelectorAll(".earth-map-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.base === name);
+  });
+}
+
+function setEarthWeatherMode(mode) {
+  activeMapMode = mode || "radar";
+
+  document.querySelectorAll(".earth-weather-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.mode === activeMapMode);
+  });
+
+  const title = document.getElementById("earthTimelineMode");
+  if (title) title.textContent = activeMapMode.toUpperCase();
+
+  if (activeMapMode === "radar") {
+    mapOverlayState.radar = true;
+    const radarToggle = document.querySelector('[data-overlay="radar"]');
+    if (radarToggle) radarToggle.classList.add("active");
+  }
+
+  applyEarthOverlayVisibility();
+  configureEarthTimeline();
+
+  if (latestResponse && activeMapMode !== "radar") {
+    const w = latestResponse?.agents?.weather?.data || {};
+    const idx = currentForecastIndex || findCurrentHourIndex(w.hourly_time || []);
+    renderEarthWeatherPoint(w, idx);
+  } else {
+    weatherMetricLayer.clearLayers();
+  }
+}
+
+function applyEarthOverlayVisibility() {
+  const pairs = [
+    ["pfz", pfzLayer],
+    ["landing", landingCentresLayer],
+    ["vesselRange", vesselRangeLayer],
+    ["oceanEvidence", oceanEvidenceLayer],
+    ["warnings", warningMapLayer]
+  ];
+
+  pairs.forEach(([key, layer]) => {
+    if (mapOverlayState[key]) {
+      if (!map.hasLayer(layer)) layer.addTo(map);
+    } else if (map.hasLayer(layer)) {
+      map.removeLayer(layer);
+    }
+  });
+
+  if (radarLayer) {
+    if (mapOverlayState.radar) {
+      if (!map.hasLayer(radarLayer)) radarLayer.addTo(map);
+    } else if (map.hasLayer(radarLayer)) {
+      map.removeLayer(radarLayer);
+    }
+  }
+
+  if (routeLayer) {
+    if (mapOverlayState.route) {
+      if (!map.hasLayer(routeLayer)) routeLayer.addTo(map);
+    } else if (map.hasLayer(routeLayer)) {
+      map.removeLayer(routeLayer);
+    }
+  }
+}
+
+function configureEarthTimeline() {
+  const slider = document.getElementById("earthTimeSlider");
+  const label = document.getElementById("earthTimelineLabel");
+  const mode = document.getElementById("earthTimelineMode");
+  if (!slider || !label || !mode) return;
+
+  mode.textContent = activeMapMode.toUpperCase();
+
+  if (activeMapMode === "radar") {
+    slider.min = 0;
+    slider.max = Math.max(0, radarFrames.length - 1);
+    slider.value = Math.max(0, radarFrameIndex >= 0 ? radarFrameIndex : radarFrames.length - 1);
+
+    if (radarFrames.length) {
+      setRadarFrame(Number(slider.value));
+    } else {
+      label.textContent = "Loading radar…";
+    }
+    return;
+  }
+
+  const forecast = document.getElementById("forecastSlider");
+  const w = latestResponse?.agents?.weather?.data || {};
+
+  slider.min = 0;
+  slider.max = Number(forecast?.max || 0);
+  slider.value = Number(forecast?.value || 0);
+
+  const times = w.hourly_time || [];
+  const start = findCurrentHourIndex(times);
+  const idx = Math.min(start + Number(slider.value || 0), Math.max(0, times.length - 1));
+
+  label.textContent = times[idx]
+    ? formatEarthTime(times[idx])
+    : "Run a query to load forecast";
+}
+
+function earthTimelineInput(value) {
+  if (activeMapMode === "radar") {
+    setRadarFrame(value);
+    return;
+  }
+
+  const forecast = document.getElementById("forecastSlider");
+  if (!forecast) return;
+
+  forecast.value = Math.max(
+    Number(forecast.min || 0),
+    Math.min(value, Number(forecast.max || 0))
+  );
+  forecast.dispatchEvent(new Event("input"));
+}
+
+function earthTimelineNow() {
+  if (activeMapMode === "radar") {
+    const latest = Math.max(0, radarFrames.length - 1);
+    const slider = document.getElementById("earthTimeSlider");
+    if (slider) slider.value = latest;
+    setRadarFrame(latest);
+    return;
+  }
+
+  const forecast = document.getElementById("forecastSlider");
+  if (!forecast) return;
+
+  forecast.value = 0;
+  forecast.dispatchEvent(new Event("input"));
+  configureEarthTimeline();
+}
+
+function toggleEarthPlayback() {
+  const button = document.getElementById("earthPlayBtn");
+  if (!button) return;
+
+  if (mapPlaybackTimer) {
+    clearInterval(mapPlaybackTimer);
+    mapPlaybackTimer = null;
+    button.textContent = "▶";
+    return;
+  }
+
+  button.textContent = "❚❚";
+
+  mapPlaybackTimer = setInterval(() => {
+    const slider = document.getElementById("earthTimeSlider");
+    if (!slider) return;
+
+    const min = Number(slider.min || 0);
+    const max = Number(slider.max || 0);
+    let next = Number(slider.value || 0) + 1;
+    if (next > max) next = min;
+
+    slider.value = next;
+    earthTimelineInput(next);
+  }, activeMapMode === "radar" ? 650 : 900);
+}
+
+function formatEarthTime(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return String(value);
+
+  return date.toLocaleString([], {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function renderEarthWeatherPoint(w, idx) {
+  weatherMetricLayer.clearLayers();
+  if (activeMapMode === "radar") return;
+
+  const lat = Number(selectedLat);
+  const lon = Number(selectedLon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+  const metric = earthMetricValue(w, idx, activeMapMode);
+  if (metric.value == null || metric.value === "—") return;
+
+  const html = `
+    <div class="earth-metric-marker earth-metric-${activeMapMode}">
+      <span class="earth-metric-icon">${metric.icon}</span>
+      <b>${esc(metric.value)}${esc(metric.unit)}</b>
+      <small>${esc(metric.label)}</small>
+    </div>
+  `;
+
+  const marker = L.marker([lat, lon], {
+    icon: L.divIcon({
+      className: "earth-weather-point-icon",
+      html,
+      iconSize: [98, 58],
+      iconAnchor: [49, 29]
+    })
+  });
+
+  marker.bindPopup(
+    `<b>${esc(metric.label)}</b><br>` +
+    `${esc(metric.value)}${esc(metric.unit)}<br>` +
+    `<small>Forecast/observation at the selected TARANG location; not a gridded global raster.</small>`
+  );
+
+  marker.addTo(weatherMetricLayer);
+}
+
+function earthMetricValue(w, idx, mode) {
+  const metricMap = {
+    precipitation: {
+      label: "Precipitation",
+      icon: "☂",
+      value: arrVal(w.hourly_precipitation, idx) ?? arrVal(w.hourly_rain, idx),
+      unit: " mm"
+    },
+    wind: {
+      label: "Wind",
+      icon: "≋",
+      value: arrVal(w.hourly_wind, idx),
+      unit: " km/h"
+    },
+    temperature: {
+      label: "Temperature",
+      icon: "♨",
+      value: arrVal(w.hourly_temperature, idx),
+      unit: "°C"
+    },
+    humidity: {
+      label: "Humidity",
+      icon: "◌",
+      value: arrVal(w.hourly_humidity, idx),
+      unit: "%"
+    },
+    pressure: {
+      label: "Pressure",
+      icon: "◎",
+      value: arrVal(w.hourly_pressure_msl, idx),
+      unit: " hPa"
+    }
+  };
+
+  return metricMap[mode] || {
+    label: "Weather",
+    icon: "•",
+    value: "—",
+    unit: ""
+  };
+}
+
 
 function renderAgentTrace(data) {
   const plan = data?.plan || {};
@@ -922,6 +1385,10 @@ let weatherPointMarker = null;
 
 function renderMapData(data) {
   pfzLayer.clearLayers();
+  landingCentresLayer.clearLayers();
+  vesselRangeLayer.clearLayers();
+  oceanEvidenceLayer.clearLayers();
+  warningMapLayer.clearLayers();
 
   if (routeLayer) {
     routeLayer.remove();
@@ -948,6 +1415,19 @@ function renderMapData(data) {
 
   const bounds = [];
   if (Number.isFinite(lat) && Number.isFinite(lon)) bounds.push([lat, lon]);
+
+  const configuredRangeKm = Number($("rangeKm").value || 25);
+  if (Number.isFinite(lat) && Number.isFinite(lon) && Number.isFinite(configuredRangeKm)) {
+    L.circle([lat, lon], {
+      radius: configuredRangeKm * 1000,
+      color: "#55c2ff",
+      weight: 1.5,
+      opacity: 0.85,
+      fillColor: "#55c2ff",
+      fillOpacity: 0.07,
+      dashArray: "6 6"
+    }).bindTooltip(`${configuredRangeKm} km vessel range`).addTo(vesselRangeLayer);
+  }
 
   const candidates = pfzCandidates(data).slice(0, 10);
 
@@ -984,6 +1464,49 @@ function renderMapData(data) {
     );
 
     marker.addTo(pfzLayer);
+
+    const landingLat = Number(landing.lat ?? landing.latitude);
+    const landingLon = Number(landing.lon ?? landing.longitude);
+    if (Number.isFinite(landingLat) && Number.isFinite(landingLon)) {
+      L.circleMarker([landingLat, landingLon], {
+        radius: 5,
+        weight: 1.5,
+        color: "#f7f7f7",
+        fillColor: "#2ea8ff",
+        fillOpacity: 0.9
+      })
+        .bindPopup(
+          `<b>⚓ ${esc(landing.name || "Landing centre")}</b><br>` +
+          `${esc(landing.district || "")}<br>` +
+          `<small>Official INCOIS landing-centre reference.</small>`
+        )
+        .addTo(landingCentresLayer);
+    }
+
+    const sst = c.sst || {};
+    const chl = c.chlorophyll || {};
+    const hasSst = sst.available === true && Number.isFinite(Number(sst.value));
+    const hasChl = chl.available === true && Number.isFinite(Number(chl.value));
+
+    if (hasSst || hasChl) {
+      const lines = [];
+      if (hasSst) lines.push(`SST: ${Number(sst.value).toFixed(1)} °C`);
+      if (hasChl) lines.push(`Chlorophyll-a: ${Number(chl.value).toFixed(3)} mg/m³`);
+
+      L.circleMarker([plat, plon], {
+        radius: 12,
+        weight: 2,
+        color: "#74f0c4",
+        fillColor: "#74f0c4",
+        fillOpacity: 0.18
+      })
+        .bindPopup(
+          `<b>Ocean evidence — ${esc(name)}</b><br>` +
+          lines.map(esc).join("<br>") +
+          `<br><small>Official evidence where available; no productivity score is inferred.</small>`
+        )
+        .addTo(oceanEvidenceLayer);
+    }
   });
 
   if (candidates.length) {
@@ -1036,8 +1559,34 @@ function renderMapData(data) {
     }).addTo(map);
   }
 
+  const risk = data?.agents?.risk?.data || {};
+  const warning = risk.official_marine_warning || {};
+  const hasWarning =
+    warning.sector_warning_match === true ||
+    warning.current_sector_warning_match === true ||
+    (Array.isArray(data?.alerts) && data.alerts.some(a => /warning|hazard|cyclone|lightning/i.test(String(a))));
+
+  if (hasWarning && Number.isFinite(lat) && Number.isFinite(lon)) {
+    L.marker([lat, lon], {
+      icon: L.divIcon({
+        className: "earth-warning-icon",
+        html: `<div class="earth-warning-marker">⚠</div>`,
+        iconSize: [34, 34],
+        iconAnchor: [17, 17]
+      })
+    })
+      .bindPopup(
+        `<b>Marine warning evidence</b><br>` +
+        `${esc(warning.status || "Warning/hazard evidence present")}<br>` +
+        `<small>Check the TARANG alert panel and official bulletin details.</small>`
+      )
+      .addTo(warningMapLayer);
+  }
+
+  applyEarthOverlayVisibility();
+
   if (bounds.length >= 2) {
-    map.fitBounds(bounds, { padding: [45, 45], maxZoom: 9 });
+    map.fitBounds(bounds, { padding: [55, 55], maxZoom: 9 });
   } else if (Number.isFinite(lat) && Number.isFinite(lon)) {
     map.setView([lat, lon], 8);
   }
@@ -1176,6 +1725,7 @@ async function fetchBrowserOpenMeteo(lat, lon) {
     hourly_pressure_msl: wh.pressure_msl || [],
     hourly_visibility: wh.visibility || [],
     hourly_wind: wh.wind_speed_10m || [],
+    hourly_wind_direction: wh.wind_direction_10m || [],
     hourly_wind_gusts: wh.wind_gusts_10m || [],
     hourly_weather_code: wh.weather_code || [],
     hourly_weather_condition: (wh.weather_code || []).map(weatherCodeText),
@@ -1298,6 +1848,19 @@ function setupForecast(data) {
 
     renderForecastReadout(w, idx, offset, initialOffset, assessment);
     renderForecastCard(w, idx, offset);
+
+    if (activeMapMode !== "radar") {
+      renderEarthWeatherPoint(w, idx);
+      const earthSlider = document.getElementById("earthTimeSlider");
+      const earthLabel = document.getElementById("earthTimelineLabel");
+      if (earthSlider) {
+        earthSlider.min = 0;
+        earthSlider.max = maxOffset;
+        earthSlider.value = offset;
+      }
+      if (earthLabel) earthLabel.textContent = formatEarthTime(times[idx]);
+    }
+
     drawTrendChart(
       w,
       startIndex,
@@ -1603,5 +2166,6 @@ applyLanguage("en");
 renderDemoScenarios();
 resetDemoMode();
 checkBackend();
+initEarthMapUI();
 addRainRadar();
 updateLocationText();
